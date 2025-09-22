@@ -59,6 +59,7 @@ bash ./gen-certs.sh --config entities.conf --outdir ./out/out-certs5 --ca-path .
 - openssl 명령어 실행 시 권한 문제가 없도록 주의하십시오.
 
 ## 구성 파일 예시 (entities.conf):
+```
 [ca]
 C=KR
 ST=Seoul
@@ -70,6 +71,7 @@ C=KR
 ST=Seoul
 O=InternalTeam
 CN=gag.internal
+```
 
 ## 라이선스:
 본 스크립트는 자유롭게 사용 및 수정 가능합니다.
