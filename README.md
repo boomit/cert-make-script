@@ -19,7 +19,6 @@ bash ./gen-certs.sh [옵션]
 ```
 
 ## 옵션:
---------
 - --config <file>       인증서 엔티티 정보가 담긴 INI 형식 구성 파일
 - --outdir <dir>        인증서와 키 파일을 생성할 출력 디렉토리
 - --ca-crt <file>       기존 CA 인증서 파일 (선택)
@@ -27,7 +26,6 @@ bash ./gen-certs.sh [옵션]
 - --ca-path <dir>       기존 CA가 있는 디렉토리 (선택, ca.crt / ca.key 포함)
 
 ## 동작 방식:
---------
 1. 외부 CA 사용:
     - --ca-crt, --ca-key 또는 --ca-path 중 하나라도 유효하면 외부 CA를 사용
     - 기존 CA를 사용하여 엔티티 인증서를 발급
@@ -43,7 +41,6 @@ bash ./gen-certs.sh [옵션]
     - CA 서명 후 CRT 파일 생성
 
 ## 출력:
---------
 - 출력 디렉토리(예: --outdir ./out/certs)에 아래 파일 생성
     - ca.key (자체 CA인 경우)
     - ca.crt (자체 CA인 경우)
@@ -52,7 +49,6 @@ bash ./gen-certs.sh [옵션]
     - <entity>.crt
 
 ## 예시:
---------
 1. 자체 CA 생성:
 bash ./gen-certs.sh --config entities.conf --outdir ./out/out-certs
 
@@ -63,8 +59,7 @@ bash ./gen-certs.sh --config entities.conf --outdir ./out/out-certs5 --ca-path .
 --------
 - openssl 명령어 실행 시 권한 문제가 없도록 주의하십시오.
 
-구성 파일 예시 (entities.conf):
---------
+## 구성 파일 예시 (entities.conf):
 [ca]
 C=KR
 ST=Seoul
@@ -77,6 +72,5 @@ ST=Seoul
 O=InternalTeam
 CN=gag.internal
 
-라이선스:
---------
+## 라이선스:
 본 스크립트는 자유롭게 사용 및 수정 가능합니다.
