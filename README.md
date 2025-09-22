@@ -56,7 +56,6 @@ bash ./gen-certs.sh --config entities.conf --outdir ./out/out-certs
 bash ./gen-certs.sh --config entities.conf --outdir ./out/out-certs5 --ca-path ./out/out-certs4
 
 ## 주의 사항:
---------
 - openssl 명령어 실행 시 권한 문제가 없도록 주의하십시오.
 
 ## 구성 파일 예시 (entities.conf):
