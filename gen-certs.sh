@@ -88,6 +88,10 @@ fi
 OPENSSL_CNF=$(openssl version -d | awk -F'"' '{print $2}')/openssl.cnf
 [[ ! -f "$OPENSSL_CNF" ]] && OPENSSL_CNF="/etc/ssl/openssl.cnf"
 
+
+# -------------------------
+# 인증서 생성 (SAN 지원)
+# -------------------------
 # -------------------------
 # 인증서 생성 (SAN 지원)
 # -------------------------
@@ -102,8 +106,12 @@ gen_cert() {
     [[ -z "$CN" ]] && { echo "[ERROR] CN required for $name"; exit 1; }
 
     # 엔티티별 폴더 생성
-    local entity_dir="$OUTPUT_DIR/$name"
-    [[ "$name" == "ca" ]] && entity_dir="$CA_DIR"
+    local entity_dir
+    if [[ "$name" == "ca" ]]; then
+        entity_dir="$CA_DIR"
+    else
+        entity_dir="$OUTPUT_DIR/entities/$name"
+    fi
     mkdir -p "$entity_dir"
 
     if [[ "$name" == "ca" && "$USE_EXTERNAL_CA" == true ]]; then
@@ -142,6 +150,12 @@ gen_cert() {
         openssl x509 -req -days 365 -in "$entity_dir/${name}.csr" \
             -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
             -out "$entity_dir/${name}.crt" $EXT_OPT
+
+        # -------------------------
+        # fullchain.crt 생성
+        # -------------------------
+        cat "$entity_dir/${name}.crt" "$CA_CRT" > "$entity_dir/${name}.fullchain.crt"
+        echo "[INFO] Generated fullchain: $entity_dir/${name}.fullchain.crt"
     fi
 
     rm -f "$TMP_CNF"
@@ -155,7 +169,9 @@ parse_ini
 # CA 인증서 생성
 gen_cert "ca" "$ca_C" "$ca_ST" "$ca_O" "$ca_CN" "DNS:ca"
 
+# -------------------------
 # 엔티티별 인증서 생성
+# -------------------------
 grep '^\[' "$CONFIG_FILE" | grep -v "\[ca\]" | tr -d '[]' | while read -r entity; do
     safe_entity="${entity//./_}"
     eval C=\${${safe_entity}_C:-}
