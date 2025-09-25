@@ -56,9 +56,13 @@ parse_ini() {
 # -------------------------
 # CA 경로 결정
 # -------------------------
+CA_DIR="$OUTPUT_DIR/ca"
+mkdir -p "$CA_DIR"
+
+# 외부 CA 파일 처리
 if [[ -n "$EXISTING_CA_PATH" ]]; then
-    EXISTING_CA_CRT="${EXISTING_CA_PATH}/ca.crt"
-    EXISTING_CA_KEY="${EXISTING_CA_PATH}/ca.key"
+    EXISTING_CA_CRT=$(find "$EXISTING_CA_PATH" -name "*.crt" | head -n1)
+    EXISTING_CA_KEY=$(find "$EXISTING_CA_PATH" -name "*.key" | head -n1)
 elif [[ -n "$EXISTING_CA_CRT" ]]; then
     EXISTING_CA_KEY="${EXISTING_CA_KEY:-${EXISTING_CA_CRT%.crt}.key}"
 elif [[ -n "$EXISTING_CA_KEY" ]]; then
@@ -67,15 +71,22 @@ fi
 
 if [[ -n "$EXISTING_CA_CRT" && -n "$EXISTING_CA_KEY" ]]; then
     check_ca_files "$EXISTING_CA_CRT" "$EXISTING_CA_KEY"
-    echo "[INFO] Using existing CA: $EXISTING_CA_CRT / $EXISTING_CA_KEY"
+    echo "[INFO] Using external CA: $EXISTING_CA_CRT / $EXISTING_CA_KEY"
     CA_CRT="$EXISTING_CA_CRT"
     CA_KEY="$EXISTING_CA_KEY"
     USE_EXTERNAL_CA=true
+    EXTERNAL_CA_FILENAME=$(basename "$EXISTING_CA_CRT")
 else
-    CA_CRT="$OUTPUT_DIR/ca.crt"
-    CA_KEY="$OUTPUT_DIR/ca.key"
+    CA_CRT="$CA_DIR/ca.crt"
+    CA_KEY="$CA_DIR/ca.key"
     USE_EXTERNAL_CA=false
 fi
+
+# -------------------------
+# OpenSSL 기본 config
+# -------------------------
+OPENSSL_CNF=$(openssl version -d | awk -F'"' '{print $2}')/openssl.cnf
+[[ ! -f "$OPENSSL_CNF" ]] && OPENSSL_CNF="/etc/ssl/openssl.cnf"
 
 # -------------------------
 # 인증서 생성 (SAN 지원)
@@ -90,13 +101,18 @@ gen_cert() {
 
     [[ -z "$CN" ]] && { echo "[ERROR] CN required for $name"; exit 1; }
 
+    # 엔티티별 폴더 생성
+    local entity_dir="$OUTPUT_DIR/$name"
+    [[ "$name" == "ca" ]] && entity_dir="$CA_DIR"
+    mkdir -p "$entity_dir"
+
     if [[ "$name" == "ca" && "$USE_EXTERNAL_CA" == true ]]; then
         echo "[INFO] External CA provided, skipping CA generation."
         return
     fi
 
     echo "🔑 Generating cert for [$name] CN=$CN, O=$O, SAN=$SAN"
-    openssl genrsa -out "$OUTPUT_DIR/${name}.key" 2048
+    openssl genrsa -out "$entity_dir/${name}.key" 2048
 
     subj=""
     [[ -n "$C" ]] && subj+="/C=$C"
@@ -104,12 +120,11 @@ gen_cert() {
     [[ -n "$O" ]] && subj+="/O=$O"
     subj+="/CN=$CN"
 
-    openssl req -new -key "$OUTPUT_DIR/${name}.key" -subj "$subj" \
-        -out "$OUTPUT_DIR/${name}.csr"
+    openssl req -new -key "$entity_dir/${name}.key" -subj "$subj" \
+        -out "$entity_dir/${name}.csr"
 
-    # SAN 포함을 위한 임시 config 생성
     TMP_CNF=$(mktemp)
-    cp /etc/ssl/openssl.cnf "$TMP_CNF"
+    cp "$OPENSSL_CNF" "$TMP_CNF"
     if [[ -n "$SAN" ]]; then
         echo "[SAN]" >> "$TMP_CNF"
         echo "subjectAltName=$SAN" >> "$TMP_CNF"
@@ -119,13 +134,14 @@ gen_cert() {
     fi
 
     if [[ "$name" == "ca" ]]; then
-        openssl x509 -req -days 3650 -in "$OUTPUT_DIR/ca.csr" \
-            -signkey "$OUTPUT_DIR/ca.key" -out "$OUTPUT_DIR/ca.crt" $EXT_OPT
+        openssl x509 -req -days 3650 -in "$entity_dir/ca.csr" \
+            -signkey "$entity_dir/ca.key" -out "$entity_dir/ca.crt" $EXT_OPT
     else
+        echo "[INFO] Using existing CA: $CA_CRT / $CA_KEY"
         check_ca_files "$CA_CRT" "$CA_KEY"
-        openssl x509 -req -days 365 -in "$OUTPUT_DIR/${name}.csr" \
+        openssl x509 -req -days 365 -in "$entity_dir/${name}.csr" \
             -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
-            -out "$OUTPUT_DIR/${name}.crt" $EXT_OPT
+            -out "$entity_dir/${name}.crt" $EXT_OPT
     fi
 
     rm -f "$TMP_CNF"
@@ -140,15 +156,30 @@ parse_ini
 gen_cert "ca" "$ca_C" "$ca_ST" "$ca_O" "$ca_CN" "DNS:ca"
 
 # 엔티티별 인증서 생성
-for entity in $(grep '^\[' "$CONFIG_FILE" | grep -v "\[ca\]" | tr -d '[]'); do
+grep '^\[' "$CONFIG_FILE" | grep -v "\[ca\]" | tr -d '[]' | while read -r entity; do
     safe_entity="${entity//./_}"
     eval C=\${${safe_entity}_C:-}
     eval ST=\${${safe_entity}_ST:-}
     eval O=\${${safe_entity}_O:-}
     eval CN=\${${safe_entity}_CN:-}
-    SAN="DNS:${CN}"  # CN을 SAN으로 추가
+    SAN="DNS:${CN}"
     gen_cert "$entity" "$C" "$ST" "$O" "$CN" "$SAN"
 done
 
-echo "✅ All certs generated in $OUTPUT_DIR/"
+# -------------------------
+# 외부 CA 파일 복사 (.crt, .srl)
+# -------------------------
+if [[ -n "$EXISTING_CA_CRT" ]]; then
+    CA_CRT_COPY="$CA_DIR/$EXTERNAL_CA_FILENAME"
+    cp -f "$EXISTING_CA_CRT" "$CA_CRT_COPY"
+    echo "[INFO] External CA cert copied to $CA_CRT_COPY"
 
+    EXISTING_CA_SRL="${EXISTING_CA_CRT%.crt}.srl"
+    if [[ -f "$EXISTING_CA_SRL" ]]; then
+        CA_SRL_COPY="$CA_DIR/$(basename "$EXISTING_CA_SRL")"
+        cp -f "$EXISTING_CA_SRL" "$CA_SRL_COPY"
+        echo "[INFO] External CA serial file copied to $CA_SRL_COPY"
+    fi
+fi
+
+echo "✅ All certs generated under $OUTPUT_DIR/<entity>/"
