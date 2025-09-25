@@ -78,7 +78,7 @@ else
 fi
 
 # -------------------------
-# 인증서 생성
+# 인증서 생성 (SAN 지원)
 # -------------------------
 gen_cert() {
     local name=$1
@@ -86,16 +86,16 @@ gen_cert() {
     local ST=${3:-}
     local O=${4:-}
     local CN=${5:-}
+    local SAN=${6:-}
 
     [[ -z "$CN" ]] && { echo "[ERROR] CN required for $name"; exit 1; }
 
-    # CA 자체 생성 시 또는 엔티티 생성
     if [[ "$name" == "ca" && "$USE_EXTERNAL_CA" == true ]]; then
         echo "[INFO] External CA provided, skipping CA generation."
         return
     fi
 
-    echo "🔑 Generating cert for [$name] CN=$CN, O=$O"
+    echo "🔑 Generating cert for [$name] CN=$CN, O=$O, SAN=$SAN"
     openssl genrsa -out "$OUTPUT_DIR/${name}.key" 2048
 
     subj=""
@@ -107,15 +107,28 @@ gen_cert() {
     openssl req -new -key "$OUTPUT_DIR/${name}.key" -subj "$subj" \
         -out "$OUTPUT_DIR/${name}.csr"
 
+    # SAN 포함을 위한 임시 config 생성
+    TMP_CNF=$(mktemp)
+    cp /etc/ssl/openssl.cnf "$TMP_CNF"
+    if [[ -n "$SAN" ]]; then
+        echo "[SAN]" >> "$TMP_CNF"
+        echo "subjectAltName=$SAN" >> "$TMP_CNF"
+        EXT_OPT="-extfile $TMP_CNF -extensions SAN"
+    else
+        EXT_OPT=""
+    fi
+
     if [[ "$name" == "ca" ]]; then
         openssl x509 -req -days 3650 -in "$OUTPUT_DIR/ca.csr" \
-            -signkey "$OUTPUT_DIR/ca.key" -out "$OUTPUT_DIR/ca.crt"
+            -signkey "$OUTPUT_DIR/ca.key" -out "$OUTPUT_DIR/ca.crt" $EXT_OPT
     else
         check_ca_files "$CA_CRT" "$CA_KEY"
         openssl x509 -req -days 365 -in "$OUTPUT_DIR/${name}.csr" \
             -CA "$CA_CRT" -CAkey "$CA_KEY" -CAcreateserial \
-            -out "$OUTPUT_DIR/${name}.crt"
+            -out "$OUTPUT_DIR/${name}.crt" $EXT_OPT
     fi
+
+    rm -f "$TMP_CNF"
 }
 
 # -------------------------
@@ -123,15 +136,19 @@ gen_cert() {
 # -------------------------
 parse_ini
 
-gen_cert "ca" "$ca_C" "$ca_ST" "$ca_O" "$ca_CN"
+# CA 인증서 생성
+gen_cert "ca" "$ca_C" "$ca_ST" "$ca_O" "$ca_CN" "DNS:ca"
 
+# 엔티티별 인증서 생성
 for entity in $(grep '^\[' "$CONFIG_FILE" | grep -v "\[ca\]" | tr -d '[]'); do
     safe_entity="${entity//./_}"
     eval C=\${${safe_entity}_C:-}
     eval ST=\${${safe_entity}_ST:-}
     eval O=\${${safe_entity}_O:-}
     eval CN=\${${safe_entity}_CN:-}
-    gen_cert "$entity" "$C" "$ST" "$O" "$CN"
+    SAN="DNS:${CN}"  # CN을 SAN으로 추가
+    gen_cert "$entity" "$C" "$ST" "$O" "$CN" "$SAN"
 done
 
 echo "✅ All certs generated in $OUTPUT_DIR/"
+
